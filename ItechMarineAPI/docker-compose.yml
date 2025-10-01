@@ -1,0 +1,23 @@
+version: "3.9"
+services:
+  db:
+    image: postgres:16
+    environment:
+      POSTGRES_PASSWORD: postgres
+      POSTGRES_DB: marinecontrol
+    ports: ["5432:5432"]
+    volumes: ["dbdata:/var/lib/postgresql/data"]
+
+  api:
+    build: .
+    depends_on: [db]
+    environment:
+      ConnectionStrings__DefaultConnection: Host=db;Port=5432;Database=marinecontrol;Username=postgres;Password=postgres
+      Jwt__Key: "CHANGE_ME_MIN_32_CHARS_SECRET_1234567890"
+      Jwt__Issuer: "MarineControl"
+      Jwt__Audience: "MarineControl.Clients"
+      ASPNETCORE_ENVIRONMENT: "Production"
+    ports: ["8080:8080"]
+
+volumes:
+  dbdata:

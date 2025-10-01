@@ -1,0 +1,52 @@
+﻿### 1) Register Owner
+POST https://localhost:5001/auth/register-owner
+Content-Type: application/json
+
+{ "email":"owner@example.com", "password":"DemoPass!123", "boatName":"My Boat" }
+
+### 2) Login (istenirse)
+POST https://localhost:5001/auth/login
+Content-Type: application/json
+
+{ "email":"owner@example.com", "password":"DemoPass!123" }
+
+### 2.1) Token değişkeni
+@token = {{login.response.body.$.token}}
+
+### 3) Boat & Channels
+GET https://localhost:5001/boats/me
+Authorization: Bearer {{token}}
+
+POST https://localhost:5001/boats/channels
+Authorization: Bearer {{token}}
+Content-Type: application/json
+
+{ "name":"Güverte Işığı", "type":0, "pin":16 }
+
+GET https://localhost:5001/boats/channels
+Authorization: Bearer {{token}}
+
+### 4) Device create (X-New-Device-Key header’ını kopyala)
+POST https://localhost:5001/devices
+Authorization: Bearer {{token}}
+Content-Type: application/json
+
+{ "name":"ESP32-Bridge" }
+
+### 5) Rotate key (opsiyonel)
+POST https://localhost:5001/devices/{{create_device.response.body.$.id}}/rotate-key
+Authorization: Bearer {{token}}
+
+### 6) Toggle channel (komut kuyruğu + MQTT publish)
+POST https://localhost:5001/channels/{{create_channel.response.body.$.id}}/toggle
+Authorization: Bearer {{token}}
+Content-Type: application/json
+
+{ "state": true }
+
+### 7) Telemetry query (grafik için)
+POST https://localhost:5001/telemetry/query
+Authorization: Bearer {{token}}
+Content-Type: application/json
+
+{ "fromUtc":"2025-10-01T00:00:00Z", "toUtc":"2099-01-01T00:00:00Z", "keys":["battery.voltage"], "page":1, "pageSize":50 }
