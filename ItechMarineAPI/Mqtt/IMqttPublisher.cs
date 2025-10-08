@@ -1,5 +1,6 @@
 ﻿namespace ItechMarineAPI.Mqtt;
+
 public interface IMqttPublisher
 {
-    Task PublishCommandAsync(Guid boatId, object payload, CancellationToken ct = default);
+    Task PublishAsync(string topic, string payload, int qos = 0, bool retain = false);
 }

@@ -1,49 +1,120 @@
-﻿using ItechMarineAPI.Data;
+﻿using System;
+using System.Collections.Generic;
+using System.Linq;
+using System.Threading.Tasks;
+using ItechMarineAPI.Data;
 using ItechMarineAPI.Dtos;
 using ItechMarineAPI.Entities;
-using ItechMarineAPI.Mqtt;
 using ItechMarineAPI.Services.Interfaces;
 using Microsoft.EntityFrameworkCore;
+using Microsoft.Extensions.Logging;
 
-public class ChannelService : IChannelService
+namespace ItechMarineAPI.Services
 {
-    private readonly AppDbContext _db;
-    private readonly ICommandService _cmd;
-    private readonly IMqttPublisher _mqtt;
-    public ChannelService(AppDbContext db, ICommandService cmd, IMqttPublisher mqtt)
-    { _db = db; _cmd = cmd; _mqtt = mqtt; }
-
-    public async Task<ChannelDto> CreateAsync(Guid ownerId, ChannelCreateDto dto)
+    public class ChannelService : IChannelService
     {
-        var boat = await _db.Boats.FirstAsync(b => b.OwnerId == ownerId);
-        var ch = new Channel { BoatId = boat.Id, Name = dto.Name, Type = dto.Type, Pin = dto.Pin, State = false };
-        _db.Channels.Add(ch); await _db.SaveChangesAsync();
-        return new ChannelDto(ch.Id, ch.Name, ch.Type, ch.Pin, ch.State);
-    }
+        private readonly AppDbContext _db;
+        private readonly ICommandService _cmd;
+        private readonly ILogger<ChannelService> _logger;
 
-    public async Task<IEnumerable<ChannelDto>> ListAsync(Guid ownerId)
-    {
-        var boatId = await _db.Boats.Where(b => b.OwnerId == ownerId).Select(b => b.Id).FirstAsync();
-        return await _db.Channels.Where(c => c.BoatId == boatId)
-          .Select(c => new ChannelDto(c.Id, c.Name, c.Type, c.Pin, c.State))
-          .ToListAsync();
-    }
+        public ChannelService(AppDbContext db, ICommandService cmd, ILogger<ChannelService> logger)
+        {
+            _db = db;
+            _cmd = cmd;
+            _logger = logger;
+        }
 
-    public async Task<ChannelDto> ToggleAsync(Guid ownerId, Guid channelId, ToggleChannelDto dto)
-    {
-        var ch = await _db.Channels
-            .Include(c => c.Boat)
-            .FirstOrDefaultAsync(c => c.Id == channelId && c.Boat.OwnerId == ownerId);
+        /// <summary>
+        /// Belirli bir owner’ın tüm kanallarını listeler.
+        /// </summary>
+        public async Task<IReadOnlyList<ChannelDto>> ListAsync(Guid ownerId)
+        {
+            var items = await _db.Channels
+                .Include(c => c.Boat)
+                .Where(c => c.Boat != null && c.Boat.OwnerId == ownerId)
+                .OrderBy(c => c.Name)
+                .ThenBy(c => c.Pin)
+                .ToListAsync();
 
-        if (ch == null)
-            throw new KeyNotFoundException("Channel not found or not owned by user.");
+            return items.Select(c => new ChannelDto(c.Id, c.Name, c.Type, c.Pin, c.State)).ToList();
+        }
 
-        ch.State = dto.State ?? !ch.State;
-        await _db.SaveChangesAsync();
+        /// <summary>
+        /// Kanal oluşturur (owner’a ait ilk tekne üzerinde). Başlangıç state=false.
+        /// </summary>
+        public async Task<ChannelDto> CreateAsync(Guid ownerId, ChannelCreateDto dto)
+        {
+            // Owner'ın ilk teknesini al (çoklu tekne desteği gerekirse DTO genişletilir)
+            var boatId = await _db.Boats
+                .Where(b => b.OwnerId == ownerId)
+                .OrderBy(b => b.Id)
+                .Select(b => b.Id)
+                .FirstOrDefaultAsync();
 
-        await _cmd.EnqueueToBoatAsync(ch.BoatId, "channel.set",
-            new { channelId = ch.Id, pin = ch.Pin, state = ch.State });
+            if (boatId == Guid.Empty)
+                throw new InvalidOperationException("No boat found for this owner.");
 
-        return new ChannelDto(ch.Id, ch.Name, ch.Type, ch.Pin, ch.State);
+            // Pin çakışması kontrolü (opsiyonel ama yararlı)
+            var pinInUse = await _db.Channels.AnyAsync(c => c.BoatId == boatId && c.Pin == dto.Pin);
+            if (pinInUse)
+                throw new InvalidOperationException($"Pin {dto.Pin} is already used on this boat.");
+
+            var ent = new Channel
+            {
+                Id = Guid.NewGuid(),
+                BoatId = boatId,
+                Name = dto.Name,
+                Type = dto.Type,
+                Pin = dto.Pin,
+                State = false // DTO'da InitialState yok, default false
+            };
+
+            _db.Channels.Add(ent);
+            await _db.SaveChangesAsync();
+
+            _logger.LogInformation("CHANNEL CREATE → ch={ChannelId} boat={BoatId} name={Name} pin={Pin}",
+                ent.Id, ent.BoatId, ent.Name, ent.Pin);
+
+            return new ChannelDto(ent.Id, ent.Name, ent.Type, ent.Pin, ent.State);
+        }
+
+        /// <summary>
+        /// Kanal durumunu değiştirir ve aynı tekneye bağlı AKTİF ilk cihaza
+        /// anında (MQTT push + DB queue) komut yollar.
+        /// </summary>
+        public async Task<ChannelDto> ToggleAsync(Guid ownerId, Guid channelId, ToggleChannelDto dto)
+        {
+            var ch = await _db.Channels
+                .Include(c => c.Boat)
+                .FirstOrDefaultAsync(c => c.Id == channelId && c.Boat != null && c.Boat.OwnerId == ownerId);
+
+            if (ch is null)
+                throw new KeyNotFoundException("Channel not found or not owned by user.");
+
+            // Hedef cihaz: aynı boat'taki ilk aktif device (CreatedAt yoksa Id'ye göre)
+            // aynı boat'taki ilk aktif device
+            var deviceId = await _db.Devices
+                .Where(d => d.BoatId == ch.BoatId && d.IsActive)
+                .OrderBy(d => d.Id) // CreatedAt yoksa Id
+                .Select(d => d.Id)
+                .FirstOrDefaultAsync();
+
+            if (deviceId == Guid.Empty)
+                throw new InvalidOperationException("No active device for this boat.");
+
+            // istenen state
+            var desired = dto.State ?? !ch.State;
+            ch.State = desired;
+            await _db.SaveChangesAsync();
+
+            // 🔵 tek cihaza push + queue
+            await _cmd.EnqueueChannelSetAsync(deviceId, ch.Pin, desired, ch.Id);
+
+
+            _logger.LogInformation("CHANNEL TOGGLE → ch={ChannelId} pin={Pin} state={State} device={DeviceId}",
+                ch.Id, ch.Pin, desired, deviceId);
+
+            return new ChannelDto(ch.Id, ch.Name, ch.Type, ch.Pin, ch.State);
+        }
     }
 }

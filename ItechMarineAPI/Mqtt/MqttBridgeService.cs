@@ -1,124 +1,90 @@
-﻿// Mqtt/MqttBridgeService.cs
-using System.Text;
-using System.Text.Json;
-using ItechMarineAPI.Data;
-using ItechMarineAPI.Entities;
-using ItechMarineAPI.Realtime;
-using Microsoft.AspNetCore.SignalR;
-using Microsoft.EntityFrameworkCore;
+﻿using System.Text;
+using Microsoft.Extensions.Hosting;
+using Microsoft.Extensions.Logging;
 using Microsoft.Extensions.Options;
 using MQTTnet;
-using Microsoft.Extensions.Hosting;   // BackgroundService için
+using MQTTnet.Client;
 using MQTTnet.Protocol;
-using MQTTnet.Client;               // QoS enum’u kullanacaksanız
-
 
 namespace ItechMarineAPI.Mqtt;
 
-public class MqttOptions
+public sealed class MqttPublisherService : BackgroundService, IMqttPublisher
 {
-    public string Host { get; set; } = "";
-    public int Port { get; set; } = 1883;
-    public string ClientId { get; set; } = "itechmarine-api";
-    public string Username { get; set; } = "";
-    public string Password { get; set; } = "";
-    public string BaseTopic { get; set; } = "itechmarine";
-}
+    private readonly ILogger<MqttPublisherService> _logger;
+    private readonly MqttOptions _opts;
+    private readonly IMqttClient _client;
+    private readonly MqttFactory _factory = new();
 
-public class MqttBridgeService : BackgroundService, IMqttPublisher
-{
-    private readonly ILogger<MqttBridgeService> _log;
-    private readonly IServiceProvider _sp;
-    private readonly MqttOptions _opt;
-    private IMqttClient? _client;
-
-    public MqttBridgeService(ILogger<MqttBridgeService> log, IServiceProvider sp, IOptions<MqttOptions> opt)
-    { _log = log; _sp = sp; _opt = opt.Value; }
+    public MqttPublisherService(ILogger<MqttPublisherService> logger, IOptions<MqttOptions> opts)
+    {
+        _logger = logger;
+        _opts = opts.Value;
+        _client = _factory.CreateMqttClient();
+    }
 
     protected override async Task ExecuteAsync(CancellationToken stoppingToken)
     {
-        var factory = new MqttFactory();
-        _client = factory.CreateMqttClient();
+        _client.DisconnectedAsync += async e =>
+        {
+            _logger.LogWarning("MQTT disconnected: {Reason}", e.ReasonString);
+            await Task.Delay(TimeSpan.FromSeconds(2), stoppingToken);
+            try { await EnsureConnectedAsync(stoppingToken); } catch { /* swallow */ }
+        };
 
-        _client.ApplicationMessageReceivedAsync += HandleMessageAsync;
+        await EnsureConnectedAsync(stoppingToken);
 
-        var options = new MqttClientOptionsBuilder()
-            .WithTcpServer(_opt.Host, _opt.Port)
-            .WithClientId(_opt.ClientId + "-" + Guid.NewGuid())
-            .WithCredentials(_opt.Username, _opt.Password)
+        // canlı tut
+        while (!stoppingToken.IsCancellationRequested)
+            await Task.Delay(1000, stoppingToken);
+    }
+
+    private async Task EnsureConnectedAsync(CancellationToken ct)
+    {
+        if (_client.IsConnected) return;
+
+        var clientId = $"{_opts.ClientIdPrefix}-{Environment.MachineName}-{Guid.NewGuid():N}".Substring(0, 22);
+
+        var builder = new MqttClientOptionsBuilder()
+            .WithClientId(clientId)
+            .WithTcpServer(_opts.Host, _opts.Port)
+            .WithCleanSession();
+
+        if (!string.IsNullOrWhiteSpace(_opts.Username))
+            builder = builder.WithCredentials(_opts.Username, _opts.Password ?? "");
+
+        if (_opts.UseTls)
+            builder = builder.WithTls();
+
+        var options = builder.Build();
+
+        _logger.LogInformation("Connecting MQTT {Host}:{Port} ...", _opts.Host, _opts.Port);
+        await _client.ConnectAsync(options, ct);
+        _logger.LogInformation("✅ MQTT connected");
+    }
+
+    public async Task PublishAsync(string topic, string payload, int qos = 0, bool retain = false)
+    {
+        if (!_client.IsConnected)
+        {
+            _logger.LogWarning("Publish dropped (not connected) → {Topic}", topic);
+            return;
+        }
+
+        var msg = new MqttApplicationMessageBuilder()
+            .WithTopic(topic)
+            .WithPayload(Encoding.UTF8.GetBytes(payload))
+            .WithQualityOfServiceLevel((MqttQualityOfServiceLevel)qos)
+            .WithRetainFlag(retain)
             .Build();
 
-        while (!stoppingToken.IsCancellationRequested)
-        {
-            try
-            {
-                if (!_client.IsConnected)
-                {
-                    await _client.ConnectAsync(options, stoppingToken);
-                    _log.LogInformation("MQTT connected");
-                    // Telemetry aboneliği: itechmarine/boat/{boatId}/telemetry
-                    var topicFilter = $"{_opt.BaseTopic}/boat/+/telemetry";
-                    await _client.SubscribeAsync(topicFilter, MQTTnet.Protocol.MqttQualityOfServiceLevel.AtLeastOnce, stoppingToken);
-                }
-                await Task.Delay(2000, stoppingToken);
-            }
-            catch (Exception ex)
-            {
-                _log.LogError(ex, "MQTT reconnect loop error");
-                await Task.Delay(5000, stoppingToken);
-            }
-        }
+        await _client.PublishAsync(msg);
+        _logger.LogDebug("📤 MQTT publish → {Topic}: {Payload}", topic, payload);
     }
 
-    private async Task HandleMessageAsync(MqttApplicationMessageReceivedEventArgs arg)
+    public override async Task StopAsync(CancellationToken cancellationToken)
     {
-        // konu: itechmarine/boat/{boatId}/telemetry
-        var topic = arg.ApplicationMessage.Topic;
-        if (!topic.Contains("/telemetry")) return;
-
-        var payload = Encoding.UTF8.GetString(arg.ApplicationMessage.PayloadSegment);
-        try
-        {
-            using var scope = _sp.CreateScope();
-            var db = scope.ServiceProvider.GetRequiredService<AppDbContext>();
-            var hub = scope.ServiceProvider.GetRequiredService<IHubContext<BoatHub>>();
-
-            // topic'ten boatId çek
-            // itechmarine/boat/{boatId}/telemetry
-            var parts = topic.Split('/', StringSplitOptions.RemoveEmptyEntries);
-            var boatId = Guid.Parse(parts[2]);
-
-            // payload ör: { "deviceId":"...", "key":"battery.voltage", "value":"12.6", "timestampUtc":"..." }
-            var doc = JsonDocument.Parse(payload).RootElement;
-            Guid? deviceId = doc.TryGetProperty("deviceId", out var d) ? d.GetGuid() : null;
-            var key = doc.GetProperty("key").GetString()!;
-            var value = doc.GetProperty("value").GetString()!;
-            var ts = doc.TryGetProperty("timestampUtc", out var tt) ? tt.GetDateTime() : DateTime.UtcNow;
-
-            var tel = new Telemetry { BoatId = boatId, DeviceId = deviceId, Key = key, Value = value, CreatedAt = ts };
-            db.Telemetries.Add(tel);
-            await db.SaveChangesAsync();
-
-            await hub.Clients.Group($"boat:{boatId}").SendAsync("telemetry", new { tel.Key, tel.Value, tel.CreatedAt });
-        }
-        catch (Exception ex)
-        {
-            _log.LogError(ex, "MQTT telemetry handle failed. Topic={Topic} Payload={Payload}", topic, payload);
-        }
-    }
-
-    // Owner tarafından komut yayınlamak için bu yardımcıyı static değil DI üzerinden çağıracağız.
-    public async Task PublishCommandAsync(Guid boatId, object payload, CancellationToken ct = default)
-    {
-        if (_client is null || !_client.IsConnected) return;
-        var topic = $"{_opt.BaseTopic}/boat/{boatId}/commands";
-        var json = JsonSerializer.Serialize(payload);
-        var msg = new MqttApplicationMessageBuilder()
-    .WithTopic(topic)
-    .WithPayload(json)
-    .WithQualityOfServiceLevel(MQTTnet.Protocol.MqttQualityOfServiceLevel.AtLeastOnce) 
-    .Build();
-
-        await _client.PublishAsync(msg, ct);
+        try { if (_client.IsConnected) await _client.DisconnectAsync(); }
+        catch { /* ignore */ }
+        await base.StopAsync(cancellationToken);
     }
 }

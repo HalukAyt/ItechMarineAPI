@@ -94,19 +94,19 @@ public class DevicesController : ControllerBase
         if (!Request.Headers.TryGetValue("X-Signature", out var sig))
             return Unauthorized();
 
-        // Body'yi doğrulamak için tekrar okumamız gerekiyorsa EnableBuffering kullan.
-        // Burada tek sefer okunuyor, yeterli.
-        var body = JsonSerializer.Serialize(dto);
-
         var device = await _db.Devices.FirstOrDefaultAsync(d => d.Id == deviceId);
         if (device is null || !device.IsActive)
             return NotFound();
 
+        // Body değil, id string'iyle doğrula:
+        var bodyToSign = $"{{\"id\":{dto.Id}}}";
+
         var plain = _ps.UnprotectDeviceKey(device.DeviceKeyProtected);
-        if (!HmacHelper.Verify(body, sig!, plain))
+        if (!HmacHelper.Verify(bodyToSign, sig!, plain))
             return Unauthorized();
 
         await _cmd.AckAsync(deviceId, dto.Id);
         return Ok();
     }
+
 }

@@ -66,9 +66,9 @@ builder.Services.AddAuthorization(o =>
 });
 // -------------------- DI: Mqtt --------------------
 builder.Services.Configure<MqttOptions>(builder.Configuration.GetSection("Mqtt"));
-builder.Services.AddSingleton<MqttBridgeService>();
-builder.Services.AddSingleton<IMqttPublisher>(sp => sp.GetRequiredService<MqttBridgeService>());
-builder.Services.AddHostedService(sp => sp.GetRequiredService<MqttBridgeService>());
+builder.Services.AddSingleton<IMqttPublisher, MqttPublisherService>();
+builder.Services.AddHostedService(sp => (MqttPublisherService)sp.GetRequiredService<IMqttPublisher>());
+
 
 
 // -------------------- Data Protection (DeviceKeyProtected) --------------------
@@ -168,6 +168,8 @@ builder.Services.AddSwaggerGen(c =>
     });
 });
 
+builder.WebHost.UseUrls("http://0.0.0.0:5087");
+
 // ==========================================================
 // -------------------- Build & Middleware ------------------
 // ==========================================================
@@ -191,7 +193,7 @@ app.UseSwagger();
 app.UseSwaggerUI();
 
 // HTTPS redirect
-app.UseHttpsRedirection();
+//app.UseHttpsRedirection();
 
 // CORS
 app.UseCors("app");
