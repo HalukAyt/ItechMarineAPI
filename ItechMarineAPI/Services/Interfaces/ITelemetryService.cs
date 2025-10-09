@@ -1,8 +1,13 @@
-﻿// Services/Interfaces/ITelemetryService.cs
-using ItechMarineAPI.Dtos;
+﻿using ItechMarineAPI.Dtos;
 
-namespace ItechMarineAPI.Services.Interfaces;
-public interface ITelemetryService
+namespace ItechMarineAPI.Services.Interfaces
 {
-    Task<PagedResult<TelemetryItemDto>> QueryAsync(Guid ownerId, TelemetryQueryDto q);
+    public interface ITelemetryService
+    {
+        // Listeleme (mevcut)
+        Task<PagedResult<TelemetryItemDto>> QueryAsync(Guid ownerId, TelemetryQueryDto q);
+
+        // Ingest/Save: cihazdan gelen tek telemetri kaydı
+        Task SaveAsync(Guid deviceId, string key, string value, DateTime? timestampUtc = null);
+    }
 }

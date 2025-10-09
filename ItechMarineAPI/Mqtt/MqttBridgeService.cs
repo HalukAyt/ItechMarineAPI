@@ -42,30 +42,30 @@ namespace ItechMarineAPI.Mqtt
             };
 
             _client.ApplicationMessageReceivedAsync += async e =>
-            {
-                try
-                {
-                    var topic = e.ApplicationMessage.Topic ?? "";
-                    var seg = e.ApplicationMessage.PayloadSegment;
-                    string body = seg.Array is null ? string.Empty : Encoding.UTF8.GetString(seg.Array, seg.Offset, seg.Count);
+              {
+                  try
+                  {
+                      var topic = e.ApplicationMessage.Topic ?? "";
+                      var seg = e.ApplicationMessage.PayloadSegment;
+                      string body = seg.Array is null ? string.Empty : Encoding.UTF8.GetString(seg.Array, seg.Offset, seg.Count);
 
-                    if (topic.EndsWith("/status", StringComparison.OrdinalIgnoreCase))
-                    {
-                        await HandleStatusAsync(topic, body);
-                        return;
-                    }
+                      if (topic.EndsWith("/status", StringComparison.OrdinalIgnoreCase))
+                      {
+                          await HandleStatusAsync(topic, body);
+                          return;
+                      }
 
-                    if (topic.Contains("/channel/", StringComparison.OrdinalIgnoreCase))
-                    {
-                        await HandleChannelStateAsync(topic, body);
-                        return;
-                    }
-                }
-                catch (Exception ex)
-                {
-                    _logger.LogError(ex, "MQTT message handling error");
-                }
-            };
+                      if (topic.Contains("/channel/", StringComparison.OrdinalIgnoreCase))
+                      {
+                          await HandleChannelStateAsync(topic, body);
+                          return;
+                      }
+                  }
+                  catch (Exception ex)
+                  {
+                      _logger.LogError(ex, "MQTT message handling error");
+                  }
+              };
 
             await ConnectAndSubscribeAsync(stoppingToken);
         }
@@ -138,6 +138,15 @@ namespace ItechMarineAPI.Mqtt
             await db.SaveChangesAsync();
 
             _logger.LogInformation("STATUS ␦ device={DeviceId} {Status}", deviceId, online ? "online" : "offline");
+
+            // 🔔 anında UI’ya gönder
+            var hub = scope.ServiceProvider.GetRequiredService<IHubContext<BoatHub>>();
+            await hub.Clients.Group(dev.BoatId.ToString()).SendAsync("device.status", new
+            {
+                deviceId = dev.Id,
+                online,
+                lastSeenUtc = dev.LastSeenUtc
+            });
         }
 
         private async Task HandleChannelStateAsync(string topic, string body)
@@ -194,5 +203,7 @@ namespace ItechMarineAPI.Mqtt
                 state = ch.State
             });
         }
+
+
     }
 }

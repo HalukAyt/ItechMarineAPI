@@ -6,5 +6,6 @@ namespace ItechMarineAPI.Services.Interfaces
     {
         Task<BoatDto> GetMyBoatAsync(Guid ownerId);
         Task<BoatDto> CreateAsync(Guid ownerId, BoatCreateDto dto);
+        Task<BoatStatusDto> GetStatusAsync(Guid ownerId);
     }
 }

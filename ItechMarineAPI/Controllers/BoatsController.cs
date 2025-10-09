@@ -29,4 +29,8 @@ public class BoatsController : ControllerBase
     [HttpGet("channels")]
     public async Task<ActionResult<IEnumerable<ChannelDto>>> ListChannels()
         => Ok(await _channels.ListAsync(OwnerId));
+
+    [HttpGet("status")]
+    public async Task<ActionResult<BoatStatusDto>> GetStatus()
+    => Ok(await _boats.GetStatusAsync(OwnerId));
 }

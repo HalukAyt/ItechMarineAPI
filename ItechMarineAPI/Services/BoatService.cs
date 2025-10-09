@@ -26,4 +26,27 @@ public class BoatService : IBoatService
         await _db.SaveChangesAsync();
         return new BoatDto(boat.Id, boat.Name);
     }
+
+    public async Task<BoatStatusDto> GetStatusAsync(Guid ownerId)
+    {
+        var boat = await _db.Boats
+            .AsNoTracking()
+            .FirstOrDefaultAsync(b => b.OwnerId == ownerId);
+
+        if (boat is null)
+            throw new KeyNotFoundException("Boat not found.");
+
+        // boat'taki tüm cihazlar arasından: herhangi biri online mı?
+        var anyOnline = await _db.Devices
+            .AsNoTracking()
+            .AnyAsync(d => d.BoatId == boat.Id && d.IsOnline);
+
+        // son görülen en yeni zaman
+        var lastSeen = await _db.Devices
+            .AsNoTracking()
+            .Where(d => d.BoatId == boat.Id)
+            .MaxAsync(d => (DateTime?)d.LastSeenUtc);
+
+        return new BoatStatusDto(anyOnline, lastSeen);
+    }
 }
