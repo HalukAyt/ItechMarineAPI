@@ -5,9 +5,12 @@ using System.Threading.Tasks;
 using ItechMarineAPI.Data;
 using ItechMarineAPI.Dtos;
 using ItechMarineAPI.Entities;
+using ItechMarineAPI.Realtime;
 using ItechMarineAPI.Services.Interfaces;
+using Microsoft.AspNetCore.SignalR;
 using Microsoft.EntityFrameworkCore;
 using Microsoft.Extensions.Logging;
+using Serilog;
 
 namespace ItechMarineAPI.Services
 {
@@ -16,11 +19,13 @@ namespace ItechMarineAPI.Services
         private readonly AppDbContext _db;
         private readonly ICommandService _cmd;
         private readonly ILogger<ChannelService> _logger;
+        private readonly IHubContext<BoatHub> _hub;
 
-        public ChannelService(AppDbContext db, ICommandService cmd, ILogger<ChannelService> logger)
+        public ChannelService(AppDbContext db, ICommandService cmd, IHubContext<BoatHub> hub, ILogger<ChannelService> logger)
         {
             _db = db;
             _cmd = cmd;
+            _hub = hub;
             _logger = logger;
         }
 
@@ -86,35 +91,36 @@ namespace ItechMarineAPI.Services
         {
             var ch = await _db.Channels
                 .Include(c => c.Boat)
-                .FirstOrDefaultAsync(c => c.Id == channelId && c.Boat != null && c.Boat.OwnerId == ownerId);
+                .FirstOrDefaultAsync(c => c.Id == channelId && c.Boat.OwnerId == ownerId);
 
-            if (ch is null)
+            if (ch == null)
                 throw new KeyNotFoundException("Channel not found or not owned by user.");
 
-            // Hedef cihaz: aynı boat'taki ilk aktif device (CreatedAt yoksa Id'ye göre)
-            // aynı boat'taki ilk aktif device
-            var deviceId = await _db.Devices
-                .Where(d => d.BoatId == ch.BoatId && d.IsActive)
-                .OrderBy(d => d.Id) // CreatedAt yoksa Id
-                .Select(d => d.Id)
-                .FirstOrDefaultAsync();
-
-            if (deviceId == Guid.Empty)
-                throw new InvalidOperationException("No active device for this boat.");
-
-            // istenen state
-            var desired = dto.State ?? !ch.State;
-            ch.State = desired;
+            ch.State = dto.State ?? !ch.State;
             await _db.SaveChangesAsync();
 
-            // 🔵 tek cihaza push + queue
-            await _cmd.EnqueueChannelSetAsync(deviceId, ch.Pin, desired, ch.Id);
+            // MQTT publish (cihaza komut gönder)
+            await _cmd.EnqueueToBoatAsync(ch.BoatId, "channel.set", new
+            {
+                channelId = ch.Id,
+                pin = ch.Pin,
+                state = ch.State
+            });
 
+            // SignalR broadcast (uygulamada anında değişsin)
+            await _hub.Clients.Group(ch.BoatId.ToString()).SendAsync("channel.state", new
+            {
+                channelId = ch.Id,
+                pin = ch.Pin,
+                state = ch.State
+            });
 
-            _logger.LogInformation("CHANNEL TOGGLE → ch={ChannelId} pin={Pin} state={State} device={DeviceId}",
-                ch.Id, ch.Pin, desired, deviceId);
+            _logger.LogInformation(
+                "CHANNEL TOGGLE ␦ ch={ChannelId} pin={Pin} state={State} boat={BoatId}",
+                ch.Id, ch.Pin, ch.State, ch.BoatId);
 
             return new ChannelDto(ch.Id, ch.Name, ch.Type, ch.Pin, ch.State);
         }
+
     }
 }

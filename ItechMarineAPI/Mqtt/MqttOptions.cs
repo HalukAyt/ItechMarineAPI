@@ -7,4 +7,7 @@ public class MqttOptions
     public bool UseTls { get; set; } = false;
     public string? Username { get; set; }
     public string? Password { get; set; }
+    // İstersen ClientId prefix, KeepAlive vb. ekleyebilirsin
 }
+
+

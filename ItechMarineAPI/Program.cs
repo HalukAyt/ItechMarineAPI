@@ -72,6 +72,7 @@ builder.Services.AddHostedService(sp => sp.GetRequiredService<MqttBridgeService>
 
 
 
+
 // -------------------- Data Protection (DeviceKeyProtected) --------------------
 builder.Services.AddDataProtection();
 builder.Services.AddSingleton<IProtectionService, ProtectionService>();
@@ -211,6 +212,7 @@ app.MapControllers();
 
 // SignalR Hub (owner rolü gerekli)
 app.MapHub<BoatHub>("/hubs/boat").RequireAuthorization("OwnerOnly");
+
 
 // Seed (rol ve demo kullanıcı/tekne)
 await Seed.EnsureSeedAsync(app.Services);
