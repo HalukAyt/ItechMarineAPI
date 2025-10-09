@@ -1,13 +1,31 @@
-﻿namespace ItechMarineAPI.Entities
+﻿using System;
+using System.ComponentModel.DataAnnotations;
+using System.ComponentModel.DataAnnotations.Schema;
+
+namespace ItechMarineAPI.Entities
 {
     public class Device
     {
-        public Guid Id { get; set; } = Guid.NewGuid();
+        [Key]
+        public Guid Id { get; set; }
+
+        [ForeignKey(nameof(Boat))]
         public Guid BoatId { get; set; }
-        public Boat Boat { get; set; } = default!;
-        public string Name { get; set; } = default!;
-        public string DeviceKeyHash { get; set; } = default!; // HMAC için hash
+        public Boat? Boat { get; set; }
+
+        [MaxLength(100)]
+        public string Name { get; set; } = "ESP32";
+
+        // HMAC için korunmuş anahtar (IDataProtection ile)
+        [Required]
+        public string DeviceKeyProtected { get; set; } = default!;
+
         public bool IsActive { get; set; } = true;
-        public string DeviceKeyProtected { get; set; } = default!;   // AES/DataProtection ile saklanan plain key
+
+        // 🔵 YENİ: Canlılık bilgisi
+        public bool IsOnline { get; set; } = false;
+
+        // 🔵 YENİ: Son görüldüğü zaman (UTC)
+        public DateTime? LastSeenUtc { get; set; }
     }
 }

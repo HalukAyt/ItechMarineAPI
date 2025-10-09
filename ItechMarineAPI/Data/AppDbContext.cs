@@ -28,10 +28,11 @@ public class AppDbContext : IdentityDbContext<AppUser, IdentityRole<Guid>, Guid>
             .HasForeignKey(x => x.OwnerId)
             .OnDelete(DeleteBehavior.Cascade);
 
-        b.Entity<Device>()
-            .HasOne(x => x.Boat)
-            .WithMany(x => x.Devices)
-            .HasForeignKey(x => x.BoatId);
+        b.Entity<Device>(e =>
+        {
+            e.Property(x => x.IsActive).HasDefaultValue(true);
+            e.Property(x => x.IsOnline).HasDefaultValue(false); // 🔵
+        });
 
         b.Entity<Channel>()
             .HasOne(x => x.Boat)

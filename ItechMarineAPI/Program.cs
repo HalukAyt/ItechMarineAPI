@@ -66,8 +66,9 @@ builder.Services.AddAuthorization(o =>
 });
 // -------------------- DI: Mqtt --------------------
 builder.Services.Configure<MqttOptions>(builder.Configuration.GetSection("Mqtt"));
-builder.Services.AddSingleton<IMqttPublisher, MqttPublisherService>();
-builder.Services.AddHostedService(sp => (MqttPublisherService)sp.GetRequiredService<IMqttPublisher>());
+builder.Services.AddSingleton<MqttBridgeService>();
+builder.Services.AddSingleton<IMqttPublisher>(sp => sp.GetRequiredService<MqttBridgeService>());
+builder.Services.AddHostedService(sp => sp.GetRequiredService<MqttBridgeService>());
 
 
 
