@@ -20,12 +20,14 @@ public class ScenesController : ControllerBase
     private readonly ILogger<ScenesController> _log;
 
     public ScenesController(AppDbContext db, ICommandService cmd, IHubContext<BoatHub> hub, ILogger<ScenesController> log)
-    { _db = db; _cmd = cmd; _hub = hub; _log = log; }
+    {
+        _db = db; _cmd = cmd; _hub = hub; _log = log;
+    }
 
     private Guid OwnerId => Guid.Parse(User.FindFirstValue(ClaimTypes.NameIdentifier)!);
 
     // Basit sahneler: isim → pin/state listesi
-    // Not: Örnek olarak isim üzerinden filtre; istersen DB tablosu ile parametrik yaparız.
+    // Not: İstersen ileride DB tablosu ile parametrik hale getirebiliriz.
     private static List<(int pin, bool state)> BuildScene(string sceneName, IEnumerable<Entities.Channel> channels)
     {
         var name = sceneName.Trim().ToLowerInvariant();
@@ -38,13 +40,13 @@ public class ScenesController : ControllerBase
             // Hepsini aç
             "allon" => channels.Select(c => (c.Pin, true)).ToList(),
 
-            // "Güverte" geçenleri aç, diğerlerine dokunma
+            // "Güverte" geçenleri aç (diğerlerine dokunma)
             "anchorage" => channels
                 .Where(c => c.Name.Contains("Güverte", StringComparison.OrdinalIgnoreCase))
                 .Select(c => (c.Pin, true))
                 .ToList(),
 
-            // Örnek: Sadece “Kabın” (Kabin) geçenleri aç
+            // "Kabin" geçenleri aç (örnek)
             "cabin" => channels
                 .Where(c => c.Name.Contains("Kabin", StringComparison.OrdinalIgnoreCase))
                 .Select(c => (c.Pin, true))
@@ -61,8 +63,12 @@ public class ScenesController : ControllerBase
         var boat = await _db.Boats.FirstOrDefaultAsync(b => b.OwnerId == OwnerId);
         if (boat is null) return NotFound("Boat not found");
 
-        var channels = await _db.Channels.Where(c => c.BoatId == boat.Id).ToListAsync();
-        if (channels.Count == 0) return Ok(new { scene, count = 0, message = "No channels." });
+        var channels = await _db.Channels
+            .Where(c => c.BoatId == boat.Id)
+            .ToListAsync();
+
+        if (channels.Count == 0)
+            return Ok(new { scene, count = 0, message = "No channels." });
 
         // 2) Aksiyonları üret
         List<(int pin, bool state)> actions;
@@ -75,7 +81,8 @@ public class ScenesController : ControllerBase
             return BadRequest(new { scene, message = "Unknown scene" });
         }
 
-        if (actions.Count == 0) return Ok(new { scene, count = 0, message = "No-op." });
+        if (actions.Count == 0)
+            return Ok(new { scene, count = 0, message = "No-op." });
 
         // 3) DB state güncelle (UI anında doğru görsün)
         foreach (var (pin, state) in actions)
@@ -85,11 +92,19 @@ public class ScenesController : ControllerBase
         }
         await _db.SaveChangesAsync();
 
-        // 4) Cihaza komutları gönder (boat'taki tüm cihazlara)
-        foreach (var (pin, state) in actions)
-            await _cmd.EnqueueToBoatAsync(boat.Id, "channel.set", new { pin, state });
+        // 4) Cihaza TEK komut gönder: scene.set  (retain=false, qos=1 önerilir)
+        // ICommandService.EnsurePublish(...): Projende 3 parametreli ise ilk satırı bırak;
+        // retain/qos destekliyorsa ikinci satırı tercih et.
+        var payload = new
+        {
+            items = actions.Select(a => new { pin = a.pin, state = a.state })
+        };
 
-        // 5) SignalR ile anında UI güncelle
+        await _cmd.EnqueueToBoatAsync(boat.Id, "scene.set", payload);
+        // Eğer servis imzan destekliyorsa (önerilir): retain=false, qos=1 gönder
+        // await _cmd.EnqueueToBoatAsync(boat.Id, "scene.set", payload, retain: false, qos: 1);
+
+        // 5) SignalR ile anında UI güncelle (tek tek veya istersen toplu)
         foreach (var ch in channels)
         {
             await _hub.Clients.Group(boat.Id.ToString()).SendAsync("channel.state", new
