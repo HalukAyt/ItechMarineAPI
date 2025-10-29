@@ -7,11 +7,13 @@ using Microsoft.EntityFrameworkCore;
 using Microsoft.Extensions.Options;
 using MQTTnet;
 using MQTTnet.Client;
+using MQTTnet.Client.Options;
+using MQTTnet.Client.Subscribing;
 using MQTTnet.Protocol;
+
 
 namespace ItechMarineAPI.Mqtt
 {
-
     public class MqttBridgeService : BackgroundService, IMqttPublisher
     {
         private readonly ILogger<MqttBridgeService> _logger;
@@ -34,38 +36,38 @@ namespace ItechMarineAPI.Mqtt
             var factory = new MqttFactory();
             _client = factory.CreateMqttClient();
 
-            _client.DisconnectedAsync += async e =>
+            _client.UseDisconnectedHandler(async e =>
             {
                 _logger.LogWarning("MQTT disconnected: {Reason}", e.Reason);
                 await Task.Delay(TimeSpan.FromSeconds(3), stoppingToken);
                 try { await ConnectAndSubscribeAsync(stoppingToken); } catch { /* ignore */ }
-            };
+            });
 
-            _client.ApplicationMessageReceivedAsync += async e =>
-              {
-                  try
-                  {
-                      var topic = e.ApplicationMessage.Topic ?? "";
-                      var seg = e.ApplicationMessage.PayloadSegment;
-                      string body = seg.Array is null ? string.Empty : Encoding.UTF8.GetString(seg.Array, seg.Offset, seg.Count);
+            _client.UseApplicationMessageReceivedHandler(async e =>
+            {
+                try
+                {
+                    var topic = e.ApplicationMessage.Topic ?? "";
+                    var payload = e.ApplicationMessage.Payload;
+                    string body = payload is null ? string.Empty : Encoding.UTF8.GetString(payload);
 
-                      if (topic.EndsWith("/status", StringComparison.OrdinalIgnoreCase))
-                      {
-                          await HandleStatusAsync(topic, body);
-                          return;
-                      }
+                    if (topic.EndsWith("/status", StringComparison.OrdinalIgnoreCase))
+                    {
+                        await HandleStatusAsync(topic, body);
+                        return;
+                    }
 
-                      if (topic.Contains("/channel/", StringComparison.OrdinalIgnoreCase))
-                      {
-                          await HandleChannelStateAsync(topic, body);
-                          return;
-                      }
-                  }
-                  catch (Exception ex)
-                  {
-                      _logger.LogError(ex, "MQTT message handling error");
-                  }
-              };
+                    if (topic.Contains("/channel/", StringComparison.OrdinalIgnoreCase))
+                    {
+                        await HandleChannelStateAsync(topic, body);
+                        return;
+                    }
+                }
+                catch (Exception ex)
+                {
+                    _logger.LogError(ex, "MQTT message handling error");
+                }
+            });
 
             await ConnectAndSubscribeAsync(stoppingToken);
         }
@@ -74,9 +76,15 @@ namespace ItechMarineAPI.Mqtt
         {
             if (_client is null) return;
 
-            var builder = new MqttClientOptionsBuilder().WithTcpServer(_opt.Host, _opt.Port);
-            if (_opt.UseTls) builder = builder.WithTls();
-            if (!string.IsNullOrWhiteSpace(_opt.Username)) builder = builder.WithCredentials(_opt.Username, _opt.Password);
+            var builder = new MqttClientOptionsBuilder()
+                .WithClientId(_opt.ClientId)
+                .WithTcpServer(_opt.Host, _opt.Port);
+
+            if (_opt.UseTls)
+                builder = builder.WithTls();
+
+            if (!string.IsNullOrWhiteSpace(_opt.Username))
+                builder = builder.WithCredentials(_opt.Username, _opt.Password);
 
             _logger.LogInformation("Connecting MQTT {Host}:{Port} ...", _opt.Host, _opt.Port);
             await _client.ConnectAsync(builder.Build(), ct);
@@ -92,11 +100,18 @@ namespace ItechMarineAPI.Mqtt
                 .WithQualityOfServiceLevel(MqttQualityOfServiceLevel.AtLeastOnce)
                 .Build();
 
-            await _client.SubscribeAsync(subStatus, ct);
-            await _client.SubscribeAsync(subState, ct);
+            await _client.SubscribeAsync(new MqttClientSubscribeOptionsBuilder()
+    .WithTopicFilter(subStatus)
+    .WithTopicFilter(subState)
+    .Build(), ct);
 
             _logger.LogInformation("SUB ␦ itechmarine/device/+/status");
             _logger.LogInformation("SUB ␦ itechmarine/device/+/channel/+");
+        }
+
+        public async Task PublishAsync(string topic, string payload)
+        {
+            await PublishAsync(topic, payload, 0, false, CancellationToken.None);
         }
 
         public async Task PublishAsync(string topic, string payload, int qos = 0, bool retain = false, CancellationToken ct = default)
@@ -139,7 +154,6 @@ namespace ItechMarineAPI.Mqtt
 
             _logger.LogInformation("STATUS ␦ device={DeviceId} {Status}", deviceId, online ? "online" : "offline");
 
-            // 🔔 anında UI’ya gönder
             var hub = scope.ServiceProvider.GetRequiredService<IHubContext<BoatHub>>();
             await hub.Clients.Group(dev.BoatId.ToString()).SendAsync("device.status", new
             {
@@ -203,7 +217,5 @@ namespace ItechMarineAPI.Mqtt
                 state = ch.State
             });
         }
-
-
     }
 }

@@ -2,12 +2,11 @@
 
 public class MqttOptions
 {
-    public string Host { get; set; } = "192.168.1.27";
+    public string Host { get; set; } = string.Empty;
     public int Port { get; set; } = 1883;
-    public bool UseTls { get; set; } = false;
-    public string? Username { get; set; }
-    public string? Password { get; set; }
-    // İstersen ClientId prefix, KeepAlive vb. ekleyebilirsin
+    public string ClientId { get; set; } = "itechmarine-api";
+    public string Username { get; set; } = string.Empty;
+    public string Password { get; set; } = string.Empty;
+    public string BaseTopic { get; set; } = "itechmarine";
+    public bool UseTls { get; set; } = true;  // 🔥 TLS flag'ini ekledik
 }
-
-

@@ -13,7 +13,7 @@ services:
     depends_on: [db]
     environment:
       ConnectionStrings__DefaultConnection: Host=db;Port=5432;Database=marinecontrol;Username=postgres;Password=postgres
-      Jwt__Key: "CHANGE_ME_MIN_32_CHARS_SECRET_1234567890"
+      Jwt__Key: "4995c3950bc80c4e7c8ccc37d78b7e65"
       Jwt__Issuer: "MarineControl"
       Jwt__Audience: "MarineControl.Clients"
       ASPNETCORE_ENVIRONMENT: "Production"

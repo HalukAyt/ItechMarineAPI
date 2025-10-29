@@ -2,6 +2,6 @@
 {
     public interface IMqttPublisher
     {
-        Task PublishAsync(string topic, string payload, int qos = 0, bool retain = false, CancellationToken ct = default);
+        Task PublishAsync(string topic, string payload);
     }
 }
