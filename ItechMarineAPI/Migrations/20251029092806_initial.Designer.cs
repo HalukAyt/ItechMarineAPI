@@ -12,8 +12,8 @@ using Npgsql.EntityFrameworkCore.PostgreSQL.Metadata;
 namespace ItechMarineAPI.Migrations
 {
     [DbContext(typeof(AppDbContext))]
-    [Migration("20251008154834_add_device_isOnline_lastSeen")]
-    partial class add_device_isOnline_lastSeen
+    [Migration("20251029092806_initial")]
+    partial class initial
     {
         /// <inheritdoc />
         protected override void BuildTargetModel(ModelBuilder modelBuilder)

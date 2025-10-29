@@ -12,7 +12,7 @@ services:
     build: .
     depends_on: [db]
     environment:
-      ConnectionStrings__DefaultConnection: Host=db;Port=5432;Database=marinecontrol;Username=postgres;Password=postgres
+      ConnectionStrings__DefaultConnection: Host=dpg-d40ta58dl3ps73dajp6g-a.oregon-postgres.render.com;Port=5432;Database=itechmarinedb_1kvo;Username=itechmarinedb_1kvo_user;Password=FV8bHzTpL2VJyxv77NNflTF8xxxppkCg
       Jwt__Key: "4995c3950bc80c4e7c8ccc37d78b7e65"
       Jwt__Issuer: "MarineControl"
       Jwt__Audience: "MarineControl.Clients"

@@ -3,7 +3,6 @@ using ItechMarineAPI.Entities;
 using Microsoft.AspNetCore.Identity;
 
 namespace ItechMarineAPI.Data;
-
 public static class Seed
 {
     public static async Task EnsureSeedAsync(IServiceProvider sp)
