@@ -105,7 +105,7 @@ builder.Services.AddCors(o => o.AddPolicy("app", p =>
         "http://localhost:19006", // Expo Go (web)
         "http://localhost:8081",  // Metro bundler
         "http://localhost:5173"   // Vite/React
-                                  // Prod origin(ler)ini burada ekleyebilirsin
+        "https://itechmarineapi-7zis.onrender.com"                          // Prod origin(ler)ini burada ekleyebilirsin
     )
     .AllowAnyHeader()
     .AllowAnyMethod()
